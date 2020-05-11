@@ -12,56 +12,95 @@ from lxml import html
 from operator import itemgetter
 from searx.engines.xpath import extract_text
 from searx.url_utils import quote, urljoin
+import json
+import datetime
 
 # engine dependent config
 categories = ['videos', 'music', 'files']
 paging = True
 
 # search-url
-url = 'https://thepiratebay.org/'
-search_url = url + 'search/{search_term}/{pageno}/99/{search_type}'
+siteurl = 'https://thepiratebay.org/'
+url = 'https://apibay.org/'
+search_url = url + 'q.php?q='
 
-# piratebay specific type-definitions
-search_types = {'files': '0',
-                'music': '100',
-                'videos': '200'}
-
-# specific xpath variables
-magnet_xpath = './/a[@title="Download this torrent using magnet"]'
-torrent_xpath = './/a[@title="Download this torrent"]'
-content_xpath = './/font[@class="detDesc"]'
-
+#piratebay specific type-definitions
+tpb_categories = { "101" :	'Music',
+               "102" : 'Audio books',
+               "103" : 'Sound clips',
+               "104" : 'FLAC',
+               "199" : 'Other',
+               "201" : 'Movies',
+               "202" : 'Movies DVDR',
+               "203" : 'Music videos',
+               "204" : 'Movie clips',
+               "205" : 'TV shows',
+               "206" : 'Handheld',
+               "207" : 'HD - Movies',
+               "208" : 'HD - TV shows',
+               "209" : '3D',
+               "299" : 'Other',
+               "301" : 'Windows',
+               "302" : 'Mac',
+               "303" : 'UNIX',
+               "304" : 'Handheld',
+               "305" : 'IOS (iPad/iPhone)',
+               "306" : 'Android',
+               "399" : 'Other OS',
+               "401" : 'PC',
+               "402" : 'Mac',
+               "403" : 'PSx',
+               "404" : 'XBOX360',
+               "405" : 'Wii',
+               "406" : 'Handheld',
+               "407" : 'IOS (iPad/iPhone)',
+               "408" : 'Android',
+               "499" : 'Other',
+               "501" : 'Movies',
+               "502" : 'Movies DVDR',
+               "503" : 'Pictures',
+               "504" : 'Games',
+               "505" : 'HD - Movies',
+               "506" : 'Movie clips',
+               "599" : 'Other',
+               "601" : 'E-books',
+               "602" : 'Comics',
+               "603" : 'Pictures',
+               "604" : 'Covers',
+               "605" : 'Physibles',
+               "699" : 'Other' }
 
 # do search-request
 def request(query, params):
-    search_type = search_types.get(params['category'], '0')
 
-    params['url'] = search_url.format(search_term=quote(query),
-                                      search_type=search_type,
-                                      pageno=params['pageno'] - 1)
+    url = search_url + query
+    params['url'] = url
+    logf=open("/tmp/searx.log","w")
+    logf.write(url + "\n")
+    logf.close()
 
     return params
 
 
 # get response from search-request
 def response(resp):
+
+    torrents = json.loads(resp.text)
+
     results = []
 
-    dom = html.fromstring(resp.text)
-
-    search_res = dom.xpath('//table[@id="searchResult"]//tr')
-
-    # return empty array if nothing is found
-    if not search_res:
-        return []
-
     # parse results
-    for result in search_res[1:]:
-        link = result.xpath('.//div[@class="detName"]//a')[0]
-        href = urljoin(url, link.attrib.get('href'))
-        title = extract_text(link)
-        content = extract_text(result.xpath(content_xpath))
-        seed, leech = result.xpath('.//td[@align="right"]/text()')[:2]
+    for torrent in torrents:
+
+        link = torrent['name']
+        href = 'https://thepiratebay.org/description.php?id=' + torrent['id']
+        title = torrent['name']
+        timestamp = float(torrent['added'])
+        seed = torrent['seeders']
+        leech = torrent['leechers']
+        size = float(torrent['size'])
+        category = torrent['category']
+        content = 'Contains ' + torrent['num_files'] + ' file(s), uploaded ' + str(datetime.datetime.fromtimestamp(timestamp)) + ' by: ' + torrent['username'] + ' (' + torrent['status'] + ') in category : "' + tpb_categories.get(category) + '"'
 
         # convert seed to int if possible
         if seed.isdigit():
@@ -75,12 +114,9 @@ def response(resp):
         else:
             leech = 0
 
-        magnetlink = result.xpath(magnet_xpath)[0]
-        torrentfile_links = result.xpath(torrent_xpath)
-        if torrentfile_links:
-            torrentfile_link = torrentfile_links[0].attrib.get('href')
-        else:
-            torrentfile_link = None
+        magnetlink = 'magnet:?xt=urn:btih:' + torrent['info_hash'] + '&dn=' + torrent['name'] + '&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2F9.rarbg.to%3A2920%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=udp%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=udp%3A%2F%2Ftracker.leechers-paradise.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateparty.gr%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.cyberia.is%3A6969%2Fannounce'
+
+        torrentfile_link = None
 
         # append result
         results.append({'url': href,
@@ -88,9 +124,14 @@ def response(resp):
                         'content': content,
                         'seed': seed,
                         'leech': leech,
-                        'magnetlink': magnetlink.attrib.get('href'),
+                        'magnetlink': magnetlink,
                         'torrentfile': torrentfile_link,
+                        'filesize': size,
                         'template': 'torrent.html'})
+
+    # return empty array if nothing is found
+    if not results:
+        return []
 
     # return results sorted by seeder
     return sorted(results, key=itemgetter('seed'), reverse=True)
